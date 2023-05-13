@@ -1,36 +1,9 @@
-// Copied and modified from serverless-http by Doug Moscrop
-// https://github.com/dougmoscrop/serverless-http/blob/master/lib/response.js
-// Licensed under the MIT License
-
 // @ts-nocheck
-import http from "node:http";
-
-const headerEnd = "\r\n\r\n";
+import http from 'node:http';
+import { Writable } from 'node:stream';
 
 const BODY = Symbol();
 const HEADERS = Symbol();
-
-function getString(data) {
-  if (Buffer.isBuffer(data)) {
-    return data.toString("utf8");
-  } else if (typeof data === "string") {
-    return data;
-  } else {
-    throw new Error(`response.write() of unexpected type: ${typeof data}`);
-  }
-}
-
-function addData(stream, data) {
-  if (
-    Buffer.isBuffer(data) ||
-    typeof data === "string" ||
-    data instanceof Uint8Array
-  ) {
-    stream[BODY].push(Buffer.from(data));
-  } else {
-    throw new Error(`response.write() of unexpected type: ${typeof data}`);
-  }
-}
 
 export class ServerResponse extends http.ServerResponse {
   static from(res) {
@@ -44,13 +17,9 @@ export class ServerResponse extends http.ServerResponse {
     return response;
   }
 
-  static body(res) {
-    return Buffer.concat(res[BODY]);
-  }
-
   static headers(res) {
     const headers =
-      typeof res.getHeaders === "function" ? res.getHeaders() : res._headers;
+      typeof res.getHeaders === 'function' ? res.getHeaders() : res._headers;
 
     return Object.assign(headers, res[HEADERS]);
   }
@@ -68,7 +37,7 @@ export class ServerResponse extends http.ServerResponse {
   }
 
   writeHead(statusCode, reason, obj) {
-    const headers = typeof reason === "string" ? obj : reason;
+    const headers = typeof reason === 'string' ? obj : reason;
 
     for (const name in headers) {
       this.setHeader(name, headers[name]);
@@ -80,58 +49,48 @@ export class ServerResponse extends http.ServerResponse {
       }
     }
 
-    super.writeHead(statusCode, reason, obj);
+    if (!this.headersSent) {
+      try {
+        this.responseStream = awslambda.HttpResponseStream.from(
+          this.responseStream,
+          {
+            statusCode,
+            headers: this.getHeaders(),
+          }
+        );
+      } catch (e) {
+        // error is most likely the below, does not affect actual output.
+        // Runtime.InvalidStreamingOperation: Cannot set content-type, too late
+        // console.log(e);
+      }
+    }
   }
 
-  constructor({ method }) {
+  constructor({ method }, responseStream: Writable) {
     super({ method });
 
+    this.responseStream = responseStream;
     this[BODY] = [];
     this[HEADERS] = {};
 
     this.useChunkedEncodingByDefault = false;
     this.chunkedEncoding = false;
-    this._header = "";
+    this._header = '';
 
     this.assignSocket({
       _writableState: {},
       writable: true,
-      on: Function.prototype,
-      removeListener: Function.prototype,
-      destroy: Function.prototype,
-      cork: Function.prototype,
-      uncork: Function.prototype,
-      write: (data, encoding, cb) => {
-        if (typeof encoding === "function") {
-          cb = encoding;
-          encoding = null;
-        }
-
-        if (this._header === "" || this._wroteHeader) {
-          addData(this, data);
-        } else {
-          const string = getString(data);
-          const index = string.indexOf(headerEnd);
-
-          if (index !== -1) {
-            const remainder = string.slice(index + headerEnd.length);
-
-            if (remainder) {
-              addData(this, remainder);
-            }
-
-            this._wroteHeader = true;
-          }
-        }
-
-        if (typeof cb === "function") {
-          cb();
-        }
-      },
+      on: responseStream.on.bind(responseStream),
+      removeListener: responseStream.removeListener.bind(responseStream),
+      destroy: responseStream.destroy.bind(responseStream),
+      cork: responseStream.cork.bind(responseStream),
+      uncork: responseStream.uncork.bind(responseStream),
+      write: responseStream.write.bind(responseStream),
     });
 
-    this.once("finish", () => {
-      this.emit("close");
+    this.once('finish', () => {
+      responseStream.end();
+      this.emit('close');
     });
   }
 }
