@@ -45,7 +45,7 @@ const requestHandler = new NextServer.default({
 /////////////
 
 export const handler = awslambda.streamifyResponse(async function (
-  event: APIGatewayProxyEventV2 | CloudFrontRequestEvent,
+  event: APIGatewayProxyEventV2 | CloudFrontRequestEvent | WarmerEvent,
   responseStream: Writable
 ) {
   // Handler warmer
