@@ -10,11 +10,12 @@ import type {
 } from 'aws-lambda';
 // @ts-ignore
 import NextServer from 'next/dist/server/next-server.js';
-import { loadConfig, setNodeEnv } from './util.js';
+import { generateUniqueId, loadConfig, setNodeEnv } from './util.js';
 import { isBinaryContentType } from './binary.js';
 import { debug } from './logger.js';
 import type { PublicFiles } from '../build.js';
 import { convertFrom, convertTo } from './event-mapper.js';
+import { WarmerEvent, WarmerResponse } from './warmer-function.js';
 
 setNodeEnv();
 setNextjsServerWorkingDirectory();
@@ -26,7 +27,8 @@ const publicAssets = loadPublicAssets();
 setNextjsPrebundledReact(config);
 debug({ nextDir });
 
-// Create a NextServer
+// Generate a 6 letter unique server ID
+const serverId = `server-${generateUniqueId()}`;
 const requestHandler = new NextServer.default({
   hostname: 'localhost',
   port: Number(process.env.PORT) || 3000,
@@ -46,6 +48,11 @@ export const handler = awslambda.streamifyResponse(async function (
   event: APIGatewayProxyEventV2 | CloudFrontRequestEvent,
   responseStream: Writable
 ) {
+  // Handler warmer
+  if ('type' in event) {
+    return formatWarmerResponse(event);
+  }
+
   debug('event', event);
 
   // Parse Lambda event and create Next.js request
@@ -165,4 +172,13 @@ function formatAPIGatewayFailoverResponse() {
 
 function formatCloudFrontFailoverResponse(event: CloudFrontRequestEvent) {
   return event.Records[0].cf.request;
+}
+
+function formatWarmerResponse(event: WarmerEvent) {
+  console.log(event);
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve({ serverId } satisfies WarmerResponse);
+    }, event.delay);
+  });
 }
